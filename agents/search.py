@@ -1,30 +1,51 @@
-import arxiv
 import requests
 import pandas as pd
 import time
 import random
+import xml.etree.ElementTree as ET
 from typing import List, Dict
 
 
 def search_arxiv(query: str, max_results: int = 5) -> List[Dict]:
+    url = "https://export.arxiv.org/api/query"
+    params = {
+        "search_query": f"all:{query}",
+        "start": 0,
+        "max_results": max_results,
+        "sortBy": "relevance",
+        "sortOrder": "descending"
+    }
+
     try:
-        search = arxiv.Search(
-            query=query,
-            max_results=max_results,
-            sort_by=arxiv.SortCriterion.Relevance
-        )
+        response = requests.get(url, params=params, timeout=20)
+        response.raise_for_status()
+
+        root = ET.fromstring(response.content)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
 
         results = []
-        for res in search.results():
+        for entry in root.findall("atom:entry", ns):
+            title = entry.find("atom:title", ns)
+            summary = entry.find("atom:summary", ns)
+            published = entry.find("atom:published", ns)
+            link = entry.find("atom:id", ns)
+            authors = entry.findall("atom:author", ns)
+
             results.append({
-                "title": res.title,
-                "authors": ", ".join([a.name for a in res.authors]),
-                "abstract": res.summary,
-                "year": res.published.year,
-                "url": res.entry_id,
+                "title": title.text.strip() if title is not None else "N/A",
+                "authors": ", ".join([
+                    a.find("atom:name", ns).text
+                    for a in authors
+                    if a.find("atom:name", ns) is not None
+                ]),
+                "abstract": summary.text.strip() if summary is not None else "No abstract available.",
+                "year": published.text[:4] if published is not None else "N/A",
+                "url": link.text.strip() if link is not None else "N/A",
                 "source": "ArXiv"
             })
+
         return results
+
     except Exception as e:
         print(f"Error searching ArXiv: {e}")
         return []
@@ -60,7 +81,10 @@ def search_semantic_scholar(query: str, limit: int = 2) -> List[Dict]:
             for paper in data.get("data", []):
                 results.append({
                     "title": paper.get("title", "N/A"),
-                    "authors": ", ".join([a.get("name", "Unknown") for a in paper.get("authors", [])]),
+                    "authors": ", ".join([
+                        a.get("name", "Unknown")
+                        for a in paper.get("authors", [])
+                    ]),
                     "abstract": paper.get("abstract", "No abstract available."),
                     "year": paper.get("year", "N/A"),
                     "url": paper.get("url", "N/A"),
